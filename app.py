@@ -1,182 +1,156 @@
-import cv2
-import streamlit as st
-import numpy as np
-import pandas as pd
-import torch
 import os
-import sys
+import streamlit as st
+import base64
+from openai import OpenAI
 
-# ---------------- CONFIGURACIÓN DE PÁGINA ----------------
+# ===== CONFIGURACIÓN DE PÁGINA =====
 st.set_page_config(
-    page_title="🔍 Detección de Objetos con YOLOv5",
-    page_icon="🤖",
-    layout="wide"
+    page_title="🔍 Análisis de Imagen con IA",
+    layout="centered",
+    page_icon="🤖"
 )
 
-# ---------------- ESTILOS PERSONALIZADOS ----------------
+# ===== ESTILO PERSONALIZADO =====
 st.markdown("""
     <style>
-    .main {
-        background: linear-gradient(180deg, #f4f4ff 0%, #ffffff 100%);
-        border-radius: 15px;
-        padding: 1.5rem;
-    }
-    h1 {
-        text-align: center;
-        color: #3a0ca3;
-        font-weight: 800;
-        font-size: 2.5rem !important;
-    }
-    h2, h3 {
-        color: #4a4e69;
-    }
-    .stButton button {
-        background: linear-gradient(90deg, #3a0ca3, #7209b7);
-        color: white;
-        border-radius: 10px;
-        font-weight: bold;
-        border: none;
-        padding: 0.6rem 1rem;
-        transition: 0.3s ease;
-    }
-    .stButton button:hover {
-        transform: scale(1.05);
-        background: linear-gradient(90deg, #7209b7, #3a0ca3);
-    }
-    .stSlider [role='slider'] {
-        accent-color: #7209b7;
-    }
-    .block-container {
-        padding-top: 2rem;
-    }
-    .result-box {
-        background-color: #f2e9e4;
-        padding: 1rem;
-        border-radius: 10px;
-        font-weight: 500;
-        color: #22223b;
-    }
+        /* Fondo degradado */
+        .stApp {
+            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+            color: white;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        /* Título principal */
+        h1 {
+            text-align: center;
+            font-size: 2.5em !important;
+            color: #f8f9fa;
+            text-shadow: 2px 2px 10px rgba(255, 255, 255, 0.2);
+            margin-bottom: 20px;
+        }
+
+        /* Caja del uploader */
+        div[data-testid="stFileUploader"] {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 15px;
+        }
+
+        /* Botones */
+        button[kind="secondary"] {
+            background: linear-gradient(90deg, #00c6ff, #0072ff);
+            color: white !important;
+            border-radius: 8px !important;
+            font-weight: bold;
+        }
+
+        /* Caja de texto */
+        textarea, input {
+            background-color: rgba(255, 255, 255, 0.1) !important;
+            color: white !important;
+            border-radius: 8px !important;
+        }
+
+        /* Expander */
+        [data-testid="stExpander"] {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+        }
+
+        /* Spinner */
+        .stSpinner > div > div {
+            border-top-color: #00c6ff !important;
+        }
+
+        /* Texto de advertencia */
+        .stAlert {
+            background-color: rgba(255, 255, 255, 0.1);
+            color: #fff !important;
+        }
     </style>
 """, unsafe_allow_html=True)
 
-# ---------------- TÍTULO Y DESCRIPCIÓN ----------------
-st.title("🚀 Detección de Objetos con YOLOv5")
 
-st.markdown("""
-Sube una imagen o captura desde tu cámara 📸 para que la IA detecte los objetos presentes en ella.  
-Puedes ajustar los parámetros en la barra lateral para mejorar los resultados.
-""")
+# ===== INTERFAZ PRINCIPAL =====
+st.title("🤖 Análisis de Imagen con Inteligencia Artificial 🏞️")
+st.write("Sube una imagen y deja que la IA te diga qué ve. Puedes agregar contexto para obtener una descripción más precisa.")
 
-# ---------------- FUNCIÓN DE CARGA DEL MODELO ----------------
-@st.cache_resource
-def load_yolov5_model(model_path='yolov5s.pt'):
-    try:
-        import yolov5
-        try:
-            model = yolov5.load(model_path, weights_only=False)
-            return model
-        except TypeError:
-            model = yolov5.load(model_path)
-            return model
-    except Exception as e:
-        st.error(f"❌ Error al cargar el modelo: {str(e)}")
-        st.info("""
-        💡 **Sugerencias:**
-        - Instala versiones compatibles:
-          ```
-          pip install torch==1.12.0 torchvision==0.13.0 yolov5==7.0.9
-          ```
-        - Verifica que el archivo `yolov5s.pt` esté en la carpeta del proyecto.
-        """)
-        return None
+# ===== API KEY =====
+ke = st.text_input("🔑 Ingresa tu Clave API de OpenAI", type="password")
+os.environ['OPENAI_API_KEY'] = ke
 
-# ---------------- CARGA DEL MODELO ----------------
-with st.spinner("🔄 Cargando modelo YOLOv5..."):
-    model = load_yolov5_model()
+api_key = os.environ['OPENAI_API_KEY']
+client = OpenAI(api_key=api_key)
 
-# ---------------- CONFIGURACIÓN Y DETECCIÓN ----------------
-if model:
-    with st.sidebar:
-        st.markdown("## ⚙️ Configuración de Detección")
-        st.caption("Ajusta los parámetros del modelo a tu preferencia:")
-        model.conf = st.slider('Confianza mínima', 0.0, 1.0, 0.25, 0.01)
-        model.iou = st.slider('Umbral IoU', 0.0, 1.0, 0.45, 0.01)
+# ===== SUBIR IMAGEN =====
+uploaded_file = st.file_uploader("📸 Sube una imagen", type=["jpg", "png", "jpeg"])
 
-        st.markdown("---")
-        st.markdown("### 🔧 Opciones avanzadas")
-        try:
-            model.agnostic = st.checkbox('NMS class-agnostic', False)
-            model.multi_label = st.checkbox('Múltiples etiquetas por caja', False)
-            model.max_det = st.number_input('Detecciones máximas', 10, 2000, 1000, 10)
-        except:
-            st.warning("⚠️ Algunas opciones avanzadas no están disponibles con esta versión")
+if uploaded_file:
+    with st.expander("👀 Vista previa de la imagen", expanded=True):
+        st.image(uploaded_file, caption=uploaded_file.name, use_container_width=True)
 
-    # --- SECCIÓN PRINCIPAL ---
-    st.markdown("### 📷 Captura o Sube tu Imagen")
-    picture = st.camera_input("Toma una foto o sube una imagen para analizar", key="camera")
+# ===== DETALLES ADICIONALES =====
+show_details = st.toggle("📝 Añadir detalles o contexto", value=False)
 
-    if picture:
-        bytes_data = picture.getvalue()
-        cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+if show_details:
+    additional_details = st.text_area("Escribe aquí el contexto adicional:")
 
-        with st.spinner("🧠 Detectando objetos..."):
-            try:
-                results = model(cv2_img)
-            except Exception as e:
-                st.error(f"Error durante la detección: {str(e)}")
-                st.stop()
+# ===== BOTÓN DE ANÁLISIS =====
+analyze_button = st.button("🚀 Analizar Imagen")
+
+# ===== FUNCIÓN DE ENCODE =====
+def encode_image(image_file):
+    return base64.b64encode(image_file.getvalue()).decode("utf-8")
+
+# ===== PROCESO DE ANÁLISIS =====
+if uploaded_file is not None and api_key and analyze_button:
+    with st.spinner("🔍 Analizando la imagen..."):
+        base64_image = encode_image(uploaded_file)
+        prompt_text = "Describe detalladamente lo que ves en la imagen en español."
+
+        if show_details and additional_details:
+            prompt_text += f"\n\nContexto adicional proporcionado por el usuario:\n{additional_details}"
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt_text},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                    },
+                ],
+            }
+        ]
 
         try:
-            predictions = results.pred[0]
-            boxes = predictions[:, :4]
-            scores = predictions[:, 4]
-            categories = predictions[:, 5]
-
-            col1, col2 = st.columns([1.2, 0.8])
-
-            with col1:
-                st.subheader("📊 Imagen Procesada")
-                results.render()
-                st.image(cv2_img, channels='BGR', use_container_width=True)
-
-            with col2:
-                st.subheader("📦 Objetos Detectados")
-
-                label_names = model.names
-                category_count = {}
-
-                for category in categories:
-                    cat_idx = int(category.item()) if hasattr(category, 'item') else int(category)
-                    category_count[cat_idx] = category_count.get(cat_idx, 0) + 1
-
-                data = []
-                for category, count in category_count.items():
-                    label = label_names[category]
-                    confidence = scores[categories == category].mean().item() if len(scores) > 0 else 0
-                    data.append({
-                        "Categoría": label,
-                        "Cantidad": count,
-                        "Confianza Promedio": f"{confidence:.2f}"
-                    })
-
-                if data:
-                    df = pd.DataFrame(data)
-                    st.dataframe(df, use_container_width=True)
-                    st.bar_chart(df.set_index('Categoría')['Cantidad'])
-                else:
-                    st.info("🔎 No se detectaron objetos. Intenta reducir el umbral de confianza.")
+            full_response = ""
+            message_placeholder = st.empty()
+            for completion in client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                max_tokens=1200,
+                stream=True
+            ):
+                if completion.choices[0].delta.content is not None:
+                    full_response += completion.choices[0].delta.content
+                    message_placeholder.markdown(
+                        f"<div style='color:#00c6ff; font-size:1.1em'>{full_response}▌</div>",
+                        unsafe_allow_html=True
+                    )
+            message_placeholder.markdown(
+                f"<div style='color:#00c6ff; font-size:1.1em'>{full_response}</div>",
+                unsafe_allow_html=True
+            )
 
         except Exception as e:
-            st.error(f"Error al procesar los resultados: {str(e)}")
-            st.stop()
-else:
-    st.error("🚫 No se pudo cargar el modelo. Revisa las dependencias e inténtalo nuevamente.")
-    st.stop()
+            st.error(f"Ocurrió un error: {e}")
 
-# ---------------- PIE DE PÁGINA ----------------
-st.markdown("---")
-st.caption("""
-**💡 Desarrollado con Streamlit, PyTorch y YOLOv5.**  
-Visual elegante diseñado para una experiencia más intuitiva 💜
-""")
+else:
+    if not uploaded_file and analyze_button:
+        st.warning("⚠️ Por favor, sube una imagen antes de analizar.")
+    if not api_key:
+        st.warning("🔑 Ingresa tu API Key para continuar.")
+
 
