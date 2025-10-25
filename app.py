@@ -1,156 +1,181 @@
-import os
-import streamlit as st
-import base64
-from openai import OpenAI
+ahora este:
 
-# ===== CONFIGURACIÓN DE PÁGINA =====
+
+import cv2
+import streamlit as st
+import numpy as np
+import pandas as pd
+import torch
+import os
+import sys
+
+# Configuración de página Streamlit
 st.set_page_config(
-    page_title="🔍 Análisis de Imagen con IA",
-    layout="centered",
-    page_icon="🤖"
+    page_title="Detección de Objetos en Tiempo Real",
+    page_icon="🔍",
+    layout="wide"
 )
 
-# ===== ESTILO PERSONALIZADO =====
-st.markdown("""
-    <style>
-        /* Fondo degradado */
-        .stApp {
-            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-            color: white;
-            font-family: 'Poppins', sans-serif;
-        }
-
-        /* Título principal */
-        h1 {
-            text-align: center;
-            font-size: 2.5em !important;
-            color: #f8f9fa;
-            text-shadow: 2px 2px 10px rgba(255, 255, 255, 0.2);
-            margin-bottom: 20px;
-        }
-
-        /* Caja del uploader */
-        div[data-testid="stFileUploader"] {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 15px;
-            padding: 15px;
-        }
-
-        /* Botones */
-        button[kind="secondary"] {
-            background: linear-gradient(90deg, #00c6ff, #0072ff);
-            color: white !important;
-            border-radius: 8px !important;
-            font-weight: bold;
-        }
-
-        /* Caja de texto */
-        textarea, input {
-            background-color: rgba(255, 255, 255, 0.1) !important;
-            color: white !important;
-            border-radius: 8px !important;
-        }
-
-        /* Expander */
-        [data-testid="stExpander"] {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 10px;
-        }
-
-        /* Spinner */
-        .stSpinner > div > div {
-            border-top-color: #00c6ff !important;
-        }
-
-        /* Texto de advertencia */
-        .stAlert {
-            background-color: rgba(255, 255, 255, 0.1);
-            color: #fff !important;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-
-# ===== INTERFAZ PRINCIPAL =====
-st.title("🤖 Análisis de Imagen con Inteligencia Artificial 🏞️")
-st.write("Sube una imagen y deja que la IA te diga qué ve. Puedes agregar contexto para obtener una descripción más precisa.")
-
-# ===== API KEY =====
-ke = st.text_input("🔑 Ingresa tu Clave API de OpenAI", type="password")
-os.environ['OPENAI_API_KEY'] = ke
-
-api_key = os.environ['OPENAI_API_KEY']
-client = OpenAI(api_key=api_key)
-
-# ===== SUBIR IMAGEN =====
-uploaded_file = st.file_uploader("📸 Sube una imagen", type=["jpg", "png", "jpeg"])
-
-if uploaded_file:
-    with st.expander("👀 Vista previa de la imagen", expanded=True):
-        st.image(uploaded_file, caption=uploaded_file.name, use_container_width=True)
-
-# ===== DETALLES ADICIONALES =====
-show_details = st.toggle("📝 Añadir detalles o contexto", value=False)
-
-if show_details:
-    additional_details = st.text_area("Escribe aquí el contexto adicional:")
-
-# ===== BOTÓN DE ANÁLISIS =====
-analyze_button = st.button("🚀 Analizar Imagen")
-
-# ===== FUNCIÓN DE ENCODE =====
-def encode_image(image_file):
-    return base64.b64encode(image_file.getvalue()).decode("utf-8")
-
-# ===== PROCESO DE ANÁLISIS =====
-if uploaded_file is not None and api_key and analyze_button:
-    with st.spinner("🔍 Analizando la imagen..."):
-        base64_image = encode_image(uploaded_file)
-        prompt_text = "Describe detalladamente lo que ves en la imagen en español."
-
-        if show_details and additional_details:
-            prompt_text += f"\n\nContexto adicional proporcionado por el usuario:\n{additional_details}"
-
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt_text},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                    },
-                ],
-            }
-        ]
-
+# Función para cargar el modelo YOLOv5 de manera compatible con versiones anteriores de PyTorch
+@st.cache_resource
+def load_yolov5_model(model_path='yolov5s.pt'):
+    try:
+        # Importar yolov5
+        import yolov5
+        
+        # Para versiones de PyTorch anteriores a 2.0, cargar directamente con weights_only=False
+        # o usar el parámetro map_location para asegurar compatibilidad
         try:
-            full_response = ""
-            message_placeholder = st.empty()
-            for completion in client.chat.completions.create(
-                model="gpt-4o",
-                messages=messages,
-                max_tokens=1200,
-                stream=True
-            ):
-                if completion.choices[0].delta.content is not None:
-                    full_response += completion.choices[0].delta.content
-                    message_placeholder.markdown(
-                        f"<div style='color:#00c6ff; font-size:1.1em'>{full_response}▌</div>",
-                        unsafe_allow_html=True
-                    )
-            message_placeholder.markdown(
-                f"<div style='color:#00c6ff; font-size:1.1em'>{full_response}</div>",
-                unsafe_allow_html=True
-            )
+            # Primer método: cargar con weights_only=False si la versión lo soporta
+            model = yolov5.load(model_path, weights_only=False)
+            return model
+        except TypeError:
+            # Segundo método: si el primer método falla, intentar un enfoque más básico
+            try:
+                model = yolov5.load(model_path)
+                return model
+            except Exception as e:
+                # Si todo falla, intentar cargar el modelo con torch directamente
+                st.warning(f"Intentando método alternativo de carga...")
+                
+                # Modificar sys.path temporalmente para poder importar torch correctamente
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                if current_dir not in sys.path:
+                    sys.path.append(current_dir)
+                
+                # Cargar el modelo con torch directamente
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+                return model
+    
+    except Exception as e:
+        st.error(f"❌ Error al cargar el modelo: {str(e)}")
+        st.info("""
+        Recomendaciones:
+        1. Instalar una versión compatible de PyTorch y YOLOv5:
+           ```
+           pip install torch==1.12.0 torchvision==0.13.0
+           pip install yolov5==7.0.9
+           ```
+        2. Asegúrate de tener el archivo del modelo en la ubicación correcta
+        3. Si el problema persiste, intenta descargar el modelo directamente de torch hub
+        """)
+        return None
 
-        except Exception as e:
-            st.error(f"Ocurrió un error: {e}")
+# Título y descripción de la aplicación
+st.title("🔍 Detección de Objetos en Imágenes")
+st.markdown("""
+Esta aplicación utiliza YOLOv5 para detectar objetos en imágenes capturadas con tu cámara.
+Ajusta los parámetros en la barra lateral para personalizar la detección.
+""")
 
+# Cargar el modelo
+with st.spinner("Cargando modelo YOLOv5..."):
+    model = load_yolov5_model()
+
+# Si el modelo se cargó correctamente, configuramos los parámetros
+if model:
+    # Sidebar para los parámetros de configuración
+    st.sidebar.title("Parámetros")
+    
+    # Ajustar parámetros del modelo
+    with st.sidebar:
+        st.subheader('Configuración de detección')
+        model.conf = st.slider('Confianza mínima', 0.0, 1.0, 0.25, 0.01)
+        model.iou = st.slider('Umbral IoU', 0.0, 1.0, 0.45, 0.01)
+        st.caption(f"Confianza: {model.conf:.2f} | IoU: {model.iou:.2f}")
+        
+        # Opciones adicionales
+        st.subheader('Opciones avanzadas')
+        try:
+            model.agnostic = st.checkbox('NMS class-agnostic', False)
+            model.multi_label = st.checkbox('Múltiples etiquetas por caja', False)
+            model.max_det = st.number_input('Detecciones máximas', 10, 2000, 1000, 10)
+        except:
+            st.warning("Algunas opciones avanzadas no están disponibles con esta configuración")
+    
+    # Contenedor principal para la cámara y resultados
+    main_container = st.container()
+    
+    with main_container:
+        # Capturar foto con la cámara
+        picture = st.camera_input("Capturar imagen", key="camera")
+        
+        if picture:
+            # Procesar la imagen capturada
+            bytes_data = picture.getvalue()
+            cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+            
+            # Realizar la detección
+            with st.spinner("Detectando objetos..."):
+                try:
+                    results = model(cv2_img)
+                except Exception as e:
+                    st.error(f"Error durante la detección: {str(e)}")
+                    st.stop()
+            
+            # Parsear resultados
+            try:
+                predictions = results.pred[0]
+                boxes = predictions[:, :4]
+                scores = predictions[:, 4]
+                categories = predictions[:, 5]
+                
+                # Mostrar resultados
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("Imagen con detecciones")
+                    # Renderizar las detecciones
+                    results.render()
+                    # Mostrar imagen con las detecciones
+                    st.image(cv2_img, channels='BGR', use_container_width=True)
+                
+                with col2:
+                    st.subheader("Objetos detectados")
+                    
+                    # Obtener nombres de etiquetas
+                    label_names = model.names
+                    
+                    # Contar categorías
+                    category_count = {}
+                    for category in categories:
+                        category_idx = int(category.item()) if hasattr(category, 'item') else int(category)
+                        if category_idx in category_count:
+                            category_count[category_idx] += 1
+                        else:
+                            category_count[category_idx] = 1
+                    
+                    # Crear dataframe para mostrar resultados
+                    data = []
+                    for category, count in category_count.items():
+                        label = label_names[category]
+                        confidence = scores[categories == category].mean().item() if len(scores) > 0 else 0
+                        data.append({
+                            "Categoría": label,
+                            "Cantidad": count,
+                            "Confianza promedio": f"{confidence:.2f}"
+                        })
+                    
+                    if data:
+                        df = pd.DataFrame(data)
+                        st.dataframe(df, use_container_width=True)
+                        
+                        # Mostrar gráfico de barras
+                        st.bar_chart(df.set_index('Categoría')['Cantidad'])
+                    else:
+                        st.info("No se detectaron objetos con los parámetros actuales.")
+                        st.caption("Prueba a reducir el umbral de confianza en la barra lateral.")
+            except Exception as e:
+                st.error(f"Error al procesar los resultados: {str(e)}")
+                st.stop()
 else:
-    if not uploaded_file and analyze_button:
-        st.warning("⚠️ Por favor, sube una imagen antes de analizar.")
-    if not api_key:
-        st.warning("🔑 Ingresa tu API Key para continuar.")
+    st.error("No se pudo cargar el modelo. Por favor verifica las dependencias e inténtalo nuevamente.")
+    st.stop()
 
-
+# Información adicional y pie de página
+st.markdown("---")
+st.caption("""
+**Acerca de la aplicación**: Esta aplicación utiliza YOLOv5 para detección de objetos en tiempo real.
+Desarrollada con Streamlit y PyTorch.
+""")
